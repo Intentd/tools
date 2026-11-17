@@ -8,12 +8,14 @@ import (
 )
 
 // Field is how one submitted value is written into a destination map: as
-// is at Path, through the Value template, or fanned out by Values
-// (destination path → template). The templates see the value as .value.
+// is at Path, through Value, or fanned out by Values (destination path →
+// value). Value and Values are evaluated by how they are written (see the
+// package doc): a template ({{ .value }}) writes text, a CEL expression
+// (${ value * 2 }) keeps its type, anything else is written as is.
 type Field struct {
 	// Path is the destination path (dot notation); empty is the key.
 	Path string
-	// Value is a template producing the value to write at Path.
+	// Value produces the value to write at Path.
 	Value string
 	// Values writes one template's result at each destination path; Path
 	// and Value are ignored when it is set.
@@ -27,7 +29,7 @@ func (r *Resolver) ApplyField(dst map[string]any, key string, f Field, value any
 		rv := r.With("value", value)
 		var errs []string
 		for path, expr := range f.Values {
-			out, err := rv.Resolve(expr)
+			out, err := rv.Value(expr)
 			if err == nil {
 				err = setPath(dst, path, out)
 			}
@@ -46,7 +48,7 @@ func (r *Resolver) ApplyField(dst map[string]any, key string, f Field, value any
 		path = key
 	}
 	if f.Value != "" {
-		out, err := r.With("value", value).Resolve(f.Value)
+		out, err := r.With("value", value).Value(f.Value)
 		if err != nil {
 			return fmt.Errorf("field %q: value: %s", key, err.Error())
 		}

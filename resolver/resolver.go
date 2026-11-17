@@ -1,11 +1,20 @@
-// Package resolver evaluates Go text/template expressions against a data
-// map with a function map. A value without "{{" is returned as is; a missing
-// key resolves to "" (missingkey=zero, with "<no value>" stripped). The
-// function map is the caller's: KEL's, the caller's own, and Functions
-// compiled from name/expression pairs.
+// Package resolver evaluates a value against a data map, by how it is
+// written:
+//
+//   - {{ ... }} is a Go text/template with the caller's function map (KEL's,
+//     the caller's own, Functions compiled from name/expression pairs); a
+//     missing key resolves to "" (missingkey=zero, "<no value>" stripped);
+//   - ${ ... } (the whole value) is a CEL expression with KEL's functions,
+//     each top-level data key a variable, and its result keeps its type;
+//   - anything else is the value itself.
+//
+// Value returns the typed result; Resolve returns text (a CEL result
+// formatted), for places that hold strings. Check validates a value without
+// data.
 //
 //	r := resolver.New(map[string]any{"spec": spec}, kelFuncs)
-//	out, err := r.Resolve("{{ .spec.name }}-app")
+//	name, err := r.Resolve("{{ .spec.name }}-app")
+//	min, err := r.Value(`${ spec.replicas * 2 }`) // an int64
 package resolver
 
 import (
@@ -28,6 +37,7 @@ import (
 type Resolver struct {
 	data  map[string]any
 	funcs template.FuncMap
+	cel   *celConfig // nil: no CEL
 }
 
 // New returns a Resolver over data with funcs. data is read, never written;
@@ -36,7 +46,20 @@ func New(data map[string]any, funcs template.FuncMap) *Resolver {
 	if data == nil {
 		data = map[string]any{}
 	}
-	return &Resolver{data: data, funcs: funcs}
+	return &Resolver{data: data, funcs: funcs, cel: newCELConfig(nil)}
+}
+
+// Value evaluates value by how it is written (see the package doc): a CEL
+// result with its type, a template's text, or value itself.
+func (r *Resolver) Value(value string) (any, error) {
+	switch {
+	case structured.IsCEL(value):
+		return r.Eval(structured.CELExpression(value))
+	case structured.IsTemplate(value):
+		return r.Resolve(value)
+	default:
+		return value, nil
+	}
 }
 
 // Data returns the data expressions are evaluated against. Do not mutate it.
@@ -51,10 +74,11 @@ func (r *Resolver) With(key string, value any) *Resolver {
 	data := make(map[string]any, len(r.data)+1)
 	maps.Copy(data, r.data)
 	data[key] = value
-	return &Resolver{data: data, funcs: r.funcs}
+	return &Resolver{data: data, funcs: r.funcs, cel: r.cel}
 }
 
-// Resolve evaluates value. Without "{{" it is returned as is.
+// Resolve evaluates value as text: a template's output, a CEL result
+// formatted (JSON for a list or map), or value itself.
 func (r *Resolver) Resolve(value string) (string, error) {
 	out, _, err := r.ResolveStrict(value)
 	return out, err
@@ -64,6 +88,13 @@ func (r *Resolver) Resolve(value string) (string, error) {
 // missing, so a composite like "{{ .a }}-{{ .b }}" that resolves to "-" can
 // be told apart from a real value.
 func (r *Resolver) ResolveStrict(value string) (out string, missing bool, err error) {
+	if structured.IsCEL(value) {
+		v, err := r.Eval(structured.CELExpression(value))
+		if err != nil {
+			return "", false, err
+		}
+		return text(v), v == nil, nil
+	}
 	if value == "" || !structured.IsTemplate(value) {
 		return value, false, nil
 	}
@@ -249,4 +280,20 @@ func ObjectToMap(obj kubeclient.Object) (map[string]any, error) {
 		return nil, fmt.Errorf("object to map: %w", err)
 	}
 	return out, nil
+}
+
+// text formats a CEL result where a string is expected.
+func text(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case map[string]any, []any:
+		b, err := json.Marshal(t)
+		if err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprint(v)
 }

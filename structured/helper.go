@@ -77,3 +77,17 @@ func DedupStrings(ss []string) []string {
 
 // IsTemplate reports whether s contains a Go template expression.
 func IsTemplate(s string) bool { return strings.Contains(s, "{{") }
+
+// IsCEL reports whether s is a CEL expression: the whole value written as
+// ${ expression }, the marker kro uses for CEL in YAML. A template is
+// {{ ... }}; anything else is a plain value.
+func IsCEL(s string) bool {
+	t := strings.TrimSpace(s)
+	return len(t) > 3 && strings.HasPrefix(t, "${") && strings.HasSuffix(t, "}")
+}
+
+// CELExpression is the expression inside a ${ ... } value.
+func CELExpression(s string) string {
+	t := strings.TrimSpace(s)
+	return strings.TrimSpace(t[2 : len(t)-1])
+}

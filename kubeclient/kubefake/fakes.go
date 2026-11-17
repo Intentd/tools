@@ -1,8 +1,10 @@
 package kubefake
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	fakediscovery "k8s.io/client-go/discovery/fake"
 	dynfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -14,6 +16,15 @@ type Clientset = k8sfake.Clientset
 
 // Dynamic is client-go's fake dynamic client.
 type Dynamic = dynfake.FakeDynamicClient
+
+// Discovery is client-go's fake discovery client, a Clientset's Discovery().
+type Discovery = fakediscovery.FakeDiscovery
+
+// WithResources sets the resources cs's discovery reports: what
+// ServerGroupsAndResources and ServerResourcesForGroupVersion return.
+func WithResources(cs *Clientset, lists ...*metav1.APIResourceList) {
+	cs.Discovery().(*Discovery).Resources = lists
+}
 
 // Reactor types, for PrependReactor on a Clientset or Dynamic.
 type (
